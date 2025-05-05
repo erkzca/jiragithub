@@ -965,7 +965,7 @@ jira_api_token = '' # Your Jira API token
 github_repo = 'Danske-Regioner-Miljoe-Tvaerregional/JAR-TEST-REPO' # GitHub repository TEST (owner/repo)
 #github_repo = '' # GitHub repository for testing (your own repo)
 github_token_prod = '' # GitHub token for production (replace with new token)
-#github_token = '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' # GitHub token for testing (replace with new token)
+#github_token = '' # GitHub token for testing (replace with new token)
 project_key = 'JAR' # Jira project key
 jql = 'key = JAR-1846' # JQL query to fetch issues (replace with your own query)
 
