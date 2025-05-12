@@ -1,4 +1,9 @@
 import logging
+import xml.etree.ElementTree as ET
+import html
+import re
+from bs4 import BeautifulSoup
+import pandas as pd
 
 # Parse Jira issue description
 def parse_jira_description(description: list[str]) -> str:
@@ -137,3 +142,58 @@ def parse_jira_description(description: list[str]) -> str:
         return "Error parsing description"
         
     return '\n'.join(result) if result else "No description found"
+
+
+def parse_jira_comments_xml(xml: str) -> pd.DataFrame:
+    """
+    Parse Jira comments from XML format issue to a comment dataframe.
+    from https://jar-cowi.atlassian.net/si/jira.issueviews:issue-xml/{issue-name}/{issue-name}.xml
+    """
+    root    = ET.fromstring(xml)
+
+    # 1) Build the attachments dict
+    attachments = {
+        att.get("id"): att.get("name")
+        for att in root.findall(".//attachments/attachment")
+    }
+
+    # 2) Walk comments and resolve image names
+    rows = []
+    for c in root.findall(".//comment"):
+        raw_html = html.unescape(c.text or "")
+        soup     = BeautifulSoup(raw_html, "html.parser")
+
+        # harvest image src attributes
+        img_srcs = [img["src"] for img in soup.find_all("img", src=True)]
+
+        # for each src, pull the numeric ID out of the URL
+        img_names = []
+        for src in img_srcs:
+            m = re.search(r"/attachment/content/(\d+)", src)
+            if m:
+                img_id = m.group(1)
+                # look up the actual filename, if it exists
+                fname = attachments.get(img_id, "NO_FILE_NAME")
+                img_names.append(fname)
+            else:
+                img_names.append("NO_FILE_NAME")
+
+        rows.append({
+            "comment_id": c.get("id"),
+            "author"    : c.get("author"),
+            "created"   : c.get("created"),
+            "text"      : soup.get_text(" ", strip=True),
+            "img_srcs"  : img_srcs,
+            "img_names" : img_names
+        })
+            
+    return pd.DataFrame(rows, columns=["comment_id", "author", "created", "text", "img_srcs", "img_names"])
+
+# def get_jira_comment_media_urls(df_xml_comments: pd.DataFrame, comment_id: str) -> list[str]:
+#     """
+#     Get all media URLs from the comments DataFrame.
+#     """
+#     urls = []
+#     for _, row in df_xml_comments[df_xml_comments.id == comment_id].iterrows():
+#         urls.extend(row["img_srcs"])
+#     return urls

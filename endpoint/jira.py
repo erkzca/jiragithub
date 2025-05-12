@@ -2,38 +2,55 @@ import requests
 from requests.auth import HTTPBasicAuth
 import logging
 import re
+import os
 
 import config.custom_fields_to_use
 
 # Fetch Jira issues
-def fetch_jira_issues(jira_base_url, jira_user, jira_api_token, jql):
-    issues = []
+def fetch_jira_issues(
+    jira_base_url: str,
+    jira_user: str,
+    jira_api_token: str,
+    jql: str,
+    page_size: int = 100,
+) -> list[dict]:
+    """Return **all** issues matching *jql*."""
+    issues: list[dict] = []
     start_at = 0
-    max_results = 100
+
+    session = requests.Session()
+    session.headers.update({"Accept": "application/json"})
+    session.auth = HTTPBasicAuth(jira_user, jira_api_token)
+
     while True:
-        url = f'{jira_base_url}/rest/api/3/search'
-        query = {
-            'jql': jql,
-            'startAt': start_at,
-            'maxResults': max_results,
-            'fields': '*all'
-        }
-        response = requests.get(
-            url,
-            headers={'Accept': 'application/json'},
-            params=query,
-            auth=HTTPBasicAuth(jira_user, jira_api_token)
+        resp = session.get(
+            f"{jira_base_url}/rest/api/3/search",
+            params={
+                "jql": jql,
+                "startAt": start_at,
+                "maxResults": page_size,
+                'fields': '*all'
+            },
+            timeout=30,
         )
-        if response.status_code != 200:
-            logging.error(
-                f"Failed to fetch issues: {response.status_code} {response.text}")
-            exit()
-        data = response.json()
-        issues.extend(data.get('issues', []))
-        total = data.get('total', 0)
-        if start_at + max_results >= total:
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError as err:
+            logging.error("Jira search failed: %s - %s", err, resp.text)
+            raise
+
+        data = resp.json()
+        page = data.get("issues", [])
+        issues.extend(page)
+
+        page_len = len(page)
+        total = data.get("total", 0)
+
+        if page_len == 0 or start_at + page_len >= total:
             break
-        start_at += max_results
+
+        start_at += page_len
+
     return issues
 
 
@@ -121,6 +138,18 @@ def fetch_jira_comments(jira_base_url, jira_user, jira_api_token, issue_key):
         logging.error("Failed to fetch comments for issue:",
                       issue_key, response.status_code, response.text)
         return []
+    
+def fetch_jira_issue_xml(jira_base_url, jira_user, jira_api_token, issue_key):
+    
+    url = f'{jira_base_url}/si/jira.issueviews:issue-xml/{issue_key}/{issue_key}.xml'
+    response = requests.get(url, headers={'Accept': 'application/xml'},
+                            auth=HTTPBasicAuth(jira_user, jira_api_token))
+    if response.status_code == 200:
+        return response.text
+    else:
+        logging.error("Failed to fetch comments for issue:",
+                      issue_key, response.status_code, response.text)
+        return []
 
 
 def get_custom_fields_from_jira(jira_base_url, jira_user, jira_api_token):
@@ -168,55 +197,65 @@ def filter_custom_fields(fields, custom_fields):
         return "\n ## Brugerdefineret felt\n" + result_string
 
 
+def _wrap(text: str, marker: str) -> str:
+    """
+    Wrap only the 'core' of the text in marker, preserving whitespace.
+    e.g. _wrap("  foo  ", "*") -> "  *foo*  "
+    """
+    _WS_RE = re.compile(r'^(\s*)(.*?)(\s*)$', re.DOTALL)
+
+    lead, core, trail = _WS_RE.match(text).groups()
+    if not core:
+        return text
+    return f"{lead}{marker}{core}{marker}{trail}"
+
 def process_content(item, output):
-    """ Helper function to process different item types """
-    if item['type'] == 'mention':
-        mention = item['attrs']['text'].replace('@', '')
-        output.append(f"{mention} ")
-    elif item['type'] == 'text':
-        text = item['text']
-        # Remove "@" for mentions
-        text_with_mentions = re.sub(r'@(\w+)', r'\1', text)
+    """Helper to convert a single ADF node to GitHub-flavored Markdown."""
+    t = item.get('type')
 
-        # Check if the text has marks
-        if 'marks' in item and item['marks']:
-            formatted_text = text_with_mentions
-            has_strong = any(
-                mark['type'] == 'strong' for mark in item['marks'])
-            has_em = any(mark['type'] == 'em' for mark in item['marks'])
-            has_underline = any(
-                mark['type'] == 'underline' for mark in item['marks'])
-            has_link = any(mark['type'] == 'link' for mark in item['marks'])
+    if t == 'mention':
+        # strip leading '@', preserve trailing space
+        name = item['attrs']['text'].lstrip('@')
+        output.append(f"{name} ") # not using "@" because it takes github users not part of the repo
 
-            # Apply basic formatting (bold, italic)
-            if has_strong:
-                formatted_text = f"**{formatted_text}**"
-            if has_em:
-                formatted_text = f"*{formatted_text}*"
+    elif t == 'text':
+        txt = item['text']
+        # strip any stray @ in plain text
+        txt = re.sub(r'@(\w+)', r'\1', txt)
 
-            # Apply underline (HTML tag)
-            if has_underline:
-                formatted_text = f"<ins>{formatted_text}</ins>"
+        if item.get('marks'):
+            # detect which marks are present
+            marks = {m['type']: m for m in item['marks']}
+            # apply in nesting order: bold → italic → underline → link
+            if 'strong' in marks:
+                txt = _wrap(txt, '**')
+            if 'em' in marks:
+                txt = _wrap(txt, '*')
+            if 'underline' in marks:
+                # HTML underline is fine for GFM
+                txt = f"<ins>{txt}</ins>"
+            if 'link' in marks:
+                href = marks['link']['attrs']['href']
+                txt = f"[{txt}]({href})"
 
-            # Apply link (should be last as it modifies the structure)
-            if has_link:
-                for mark in item['marks']:
-                    if mark['type'] == 'link':
-                        href = mark['attrs']['href']
-                        formatted_text = f"[{formatted_text}]({href})"
-                        break
+        output.append(txt)
 
-            output.append(formatted_text)
-        else:
-            output.append(text_with_mentions)  # Plain text
-    elif item['type'] == 'hardBreak':
-        output.append('\n')  # Use for new line
-    elif item['type'] == 'inlineCard':
+    elif t == 'hardBreak':
+        output.append('\n')
+
+    elif t == 'inlineCard':
         url = item['attrs'].get('url', '')
-        output.append(f"[Link]({url})")  # Add link
-    elif item['type'] == 'emoji':
-        emoji_text = item['attrs'].get('text', '')
-        output.append(emoji_text)
+        output.append(f"[Link]({url})")
+
+    elif t == 'emoji':
+        output.append(item['attrs'].get('text', ''))
+    
+    elif t == 'mediaInline':
+        logging.info("type 'mediaInline' not implemented: %s", item)
+
+    else:
+        # you can expand for paragraphs, lists, etc.
+        raise NotImplementedError(f"Unsupported node type: {t}")
 
 
 def format_ordered_list(block, output, level=1):
@@ -292,7 +331,10 @@ def format_bullet_list(block, output, level=1):
                 format_bullet_list(content_block, output, level + 1)
 
 
-def format_jira_comment(comment):
+def format_jira_comment(comment: dict, df_media_comments: list[str]):
+
+    JIRA_BASE_URL = os.getenv('JIRA_BASE_URL')
+    
     # Extract the author's display name
     author = comment.get('author', {}).get('displayName', 'Unknown Author')
 
@@ -305,6 +347,10 @@ def format_jira_comment(comment):
         content = []  # Ensure content is defined even if empty
 
     formatted_parts = []
+    media_number = 0
+
+    img_names = df_media_comments.img_names # .iloc[media_number,:]
+    img_srcs = df_media_comments.img_srcs
 
     href = comment.get('author', {}).get('self')
     # Construct the header part with author
@@ -320,6 +366,18 @@ def format_jira_comment(comment):
             formatted_text = ''.join(paragraph_text).strip()
             if formatted_text:
                 formatted_parts.append(formatted_text)
+        elif block['type'] == 'mediaSingle':
+
+            img_name = img_names[media_number]
+            img_src = img_srcs[media_number]
+
+            if 'thumbnail' in img_src:
+
+                img_src = img_src.replace('https://jar-cowi.atlassian.net/', '')
+                img_src = img_src.replace('thumbnail', 'content')
+
+            formatted_parts.append(f'[{img_name}]({JIRA_BASE_URL}/{img_src})')
+            media_number += 1
 
         elif block['type'] == 'blockquote' and 'content' in block:
             # Start blockquote with markdown indicator

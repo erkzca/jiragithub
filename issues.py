@@ -2,15 +2,13 @@
 from datetime import datetime, timedelta, timezone
 import re
 import pandas as pd
-import threading
-from queue import Queue
 import logging
 import os
 from dotenv import load_dotenv
 
 import config.assignees
 from transformer import date_time_helper
-from parser import jira
+import parser.jira
 import endpoint.github
 import endpoint.jira
 
@@ -75,7 +73,7 @@ def match_csv_to_jira(labels: list[str] | list[None], label_sheet: pd.DataFrame)
 # Migrate Jira issues to GitHub
 
 
-def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo, github_token, jql, projects, assignees):
+def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo, github_token, jql, assignees):
     # Step 1: Fetch Jira Issues
     jira_issues = endpoint.jira.fetch_jira_issues(
         jira_base_url, jira_user, jira_api_token, jql)
@@ -98,7 +96,7 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
         issue_title = "[" + issue['key'] + "] " + issue['fields']['summary']
 
         # Creation of issue description
-        issue_description = jira.parse_jira_description(
+        issue_description = parser.jira.parse_jira_description(
             issue['fields'].get('description', 'No description found'))
 
         # Getting owners name from response
@@ -193,11 +191,16 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
         # Fetching the comments from the issue
         issue_comments = endpoint.jira.fetch_jira_comments(
             jira_base_url, jira_user, jira_api_token, issue['key'])
+        issue_xml = endpoint.jira.fetch_jira_issue_xml(jira_base_url, jira_user, jira_api_token, issue['key'])
+        df_comments_media = parser.jira.parse_jira_comments_xml(issue_xml)
+
+        # Parsing the comments to get the created date and format them
         comment_created_date = []
         formatted_comments = []
         # Formatting the comments to be added to the issue
         for comment in issue_comments:
-            formatted_comments.append(endpoint.jira.format_jira_comment(comment))
+            df_comment_medias = df_comments_media[df_comments_media.comment_id == comment["id"]].iloc[0]
+            formatted_comments.append(endpoint.jira.format_jira_comment(comment, df_comment_medias))
             comment_created_date.append(
                 date_time_helper.convert_jira_to_github_datetime_format(comment['created']))
         if issue_type == 'Bug':
@@ -236,23 +239,20 @@ if __name__ == "__main__":
     JQL = os.getenv('JQL')
 
     logger = setup_logging()
-    # request_queue = Queue()
-    # worker_thread = threading.Thread(target=endpoint.github.request_worker,args=(request_queue,))
-    # worker_thread.start()
 
     # Fetch Github projects that exist in working repo (Working on your own repo you can comment this out)
     projects = endpoint.github.list_projects(GH_REPO, GH_TOKEN)
 
     # Jar github projects to migrate to (The ones that exist in JAR Github repository)
     # ['TEST - Lokal RSjælland', 'TEST - Lokal RSyd', 'TEST - JAR-MASTER']
-    projects_to = ['JAR']
+    projects_to = [PROJECT_KEY]
 
     # Function tp start the migration process
     github_issue_numbers = migrate_jira_to_github(
-        JIRA_BASE_URL, JIRA_USER, JIRA_API_TOKEN, GH_REPO, GH_TOKEN, JQL, projects_to, config.assignees.ASSIGNEES)
+        JIRA_BASE_URL, JIRA_USER, JIRA_API_TOKEN, GH_REPO, GH_TOKEN, JQL, config.assignees.ASSIGNEES)
 
     # Add issue to project (TEST - JAR-MASTER) in GitHub
-    project_id = get_project_id(projects, project_name="JAR")
+    project_id = get_project_id(projects, project_name=PROJECT_KEY)
 
     # Add the issues to the GitHub project
     for issue_number in github_issue_numbers:
@@ -261,4 +261,3 @@ if __name__ == "__main__":
             endpoint.github.add_issue_to_project(
                 GH_REPO, GH_TOKEN, project_id, issue_number)
 
-    # worker_thread.join()  # Wait for the worker thread to finish

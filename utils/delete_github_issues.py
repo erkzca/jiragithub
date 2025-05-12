@@ -1,7 +1,7 @@
 #!/bin/bash
 
-REPO="COWI-MI/PM"         # Your repo
-FROM_ISSUE_NUMBER=19     # Starting issue number to delete from
+REPO="USER_NAME/REPO_NAME"         # Your repo
+FROM_ISSUE_NUMBER=10     # Starting issue number to delete from
 
 # Fetch up to 1000 issues, then loop
 gh issue list --repo "$REPO" --state all --limit 1000 --json number,title |
