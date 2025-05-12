@@ -3,6 +3,9 @@ from requests.auth import HTTPBasicAuth
 import time
 from datetime import datetime, timezone
 import re
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 class GithubRateLimiter:
     def __init__(self, max_requests=30, time_window=60):
@@ -126,12 +129,13 @@ def create_github_project(github_repo, github_token, project_name, project_body=
         print(f"Failed to create project: {response.status_code}, {response.text}")
         return None
      
-jira_url = 'https://jar-cowi.atlassian.net'
-jira_user = ''
-jira_api_token = ''
-github_repo = ''
-github_token = ''
-project_key = 'JAR'
+# Environment variables
+jira_url = os.getenv('JIRA_URL')
+jira_user = os.getenv('JIRA_USER')
+jira_api_token = os.getenv('JIRA_API_TOKEN')
+github_repo = os.getenv('GH_REPO')
+github_token = os.getenv('GH_TOKEN')
+project_key = os.getenv('PROJECT_KEY')
 
 jira_projects = fetch_jira_projects(jira_url, jira_user, jira_api_token)
 for jira_project in jira_projects:

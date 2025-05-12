@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 import requests
 from requests.auth import HTTPBasicAuth
 import time
@@ -44,12 +48,16 @@ def calculate_api_calls(jira_url, jira_user, jira_api_token, jql):
     print(len(issues) + len(comments))
     return len(issues) + len(comments)
 
-jira_url = 'https://jar-cowi.atlassian.net'
-jira_user = ''
-jira_api_token = ''
-github_repo = 'Danske-Regioner-Miljoe-Tvaerregional/JAR-TEST-REPO'
-github_token = ''
-project_key = 'JAR'
-jql = 'project = JAR and labels = 4.0 or labels = 4.01 or labels = 4.1 or labels = 4.2 or labels = 4.7 or labels = 4.12 or labels = UdenforRelease or labels = “Uafklaret”'
 
-amount = calculate_api_calls(jira_url, jira_user, jira_api_token, jql)
+if __name__ == "__main__":
+
+    # Environment variables
+    JIRA_BASE_URL = os.getenv('JIRA_BASE_URL')
+    JIRA_USER = os.getenv('JIRA_USER')
+    JIRA_API_TOKEN = os.getenv('JIRA_API_TOKEN')
+    GH_REPO = os.getenv('GH_REPO')
+    GH_TOKEN = os.getenv('GH_TOKEN')
+    PROJECT_KEY = os.getenv('PROJECT_KEY')
+    JQL = os.getenv('JQL')
+
+    amount = calculate_api_calls(JIRA_BASE_URL, JIRA_USER, JIRA_API_TOKEN, JQL)
