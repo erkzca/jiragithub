@@ -124,17 +124,17 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
             issue['fields']['created'])
 
         # Getting the issue custom fields from response
-        issue_fields = endpoint.jira.filter_custom_fields(issue['fields'], fields)
+        issue_fields = parser.jira.filter_custom_fields(issue['fields'], fields)
 
         # Getting the issue attachments from response
-        issue_attachments = endpoint.jira.parse_issue_attachments(
+        issue_attachments = parser.jira.parse_issue_attachments(
             issue['fields'].get('attachment', []))
 
         # Appending main body of description to the description list
         description.append(issue_description)
 
         # Getting issue links from response (The relationship between issues) e.g. "is blocked by" or "blocks"
-        issue_links = endpoint.jira.parse_issue_links(issue['fields'].get('issuelinks', []))
+        issue_links = parser.jira.parse_issue_links(issue['fields'].get('issuelinks', []))
 
         # If any of them exist we add them to the body of the description
         if issue_links:
@@ -189,7 +189,7 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
         issue_type = issue['fields']['issuetype']['name']
 
         # Fetching the comments from the issue
-        issue_comments = endpoint.jira.fetch_jira_comments(
+        issue_comments = endpoint.jira.fetch_all_jira_comments(
             jira_base_url, jira_user, jira_api_token, issue['key'])
         issue_xml = endpoint.jira.fetch_jira_issue_xml(jira_base_url, jira_user, jira_api_token, issue['key'])
         df_comments_media = parser.jira.parse_jira_comments_xml(issue_xml)
@@ -200,7 +200,7 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
         # Formatting the comments to be added to the issue
         for comment in issue_comments:
             df_comment_medias = df_comments_media[df_comments_media.comment_id == comment["id"]].iloc[0]
-            formatted_comments.append(endpoint.jira.format_jira_comment(comment, df_comment_medias))
+            formatted_comments.append(parser.jira.format_jira_comment(comment, df_comment_medias))
             comment_created_date.append(
                 date_time_helper.convert_jira_to_github_datetime_format(comment['created']))
         if issue_type == 'Bug':

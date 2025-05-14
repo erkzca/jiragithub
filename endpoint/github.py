@@ -113,7 +113,7 @@ def create_github_issue(github_repo, github_token,
             # "assignee": issue_owner, #NOTE uncomment for prod
             "labels": label_list
         },
-        "comments": comments_list[:100], # limit to 100 comments
+        "comments": comments_list, # limit to 100 comments
     }
 
     response = make_github_request(requests.post, url, headers=headers, json=payload)
@@ -129,7 +129,7 @@ def create_github_issue(github_repo, github_token,
         data = response.json()
         import_id     = data['id']
         status_url    = data['url']
-        logging.info(f"Issue import queued (job {import_id}). Polling {status_url}…")
+        logging.info(f"Issue import (job {import_id}). Polling {status_url}…")
 
         # Poll until done or timeout
         start_time = time.time()
@@ -151,19 +151,6 @@ def create_github_issue(github_repo, github_token,
 
         if status == 'imported':
             issue_number = status_resp_json["issue_url"].split("/")[-1]
-
-            if len(comments_list) > 100:
-                logging.error(f"Comments list is too long ({len(comments_list)}). Splitting into batches of 100.")
-                for lower_bound in range(100, len(comments_list), 100):
-                    comments_list_batch = comments_list[lower_bound:lower_bound+100]
-
-                    comment_resp = requests.post(
-                    f"https://api.github.com/repos/{github_repo}/issues/{issue_number}/comments",
-                    headers=headers,
-                    json=comments_list_batch
-                    )
-                    comment_resp.raise_for_status()
-                    time.sleep(1)
             logging.info(f"Issue number #{issue_number} succeeded.")
             return issue_number
 
@@ -281,61 +268,3 @@ def add_issue_to_project(github_repo, github_token, project_id, issue_number):
         logging.error(f"Failed to add issue to project: {response.text}")
     
     return success
-
-def request_worker(queue):
-    while True:
-        item = queue.get()
-        if item is None:
-            logging.info("Worker is shutting down.")
-            break
-
-        # Unpacking for the method call
-        method, github_repo, github_token, title, body, owner, labels, status, callback = item
-        # print(f"Processing request: {method}, Title: {title}")
-        try:
-            logging.info(
-                f"Processing request: {method.__name__}, Title: {title}")
-            if method.__name__ == 'create_github_issue':
-                # Construct the URL for creating the GitHub issue
-                logging.info(f"Creating GitHub issue")
-                url = f"https://api.github.com/repos/{github_repo}/issues"
-                headers = {
-                    'Authorization': f'Bearer {github_token}',
-                    'Accept': 'application/vnd.github.v3+json',
-                    'Content-Type': 'application/json'
-                }
-
-                # Prepare JSON payload for the GitHub issue
-                json_data = {
-                    'title': title,
-                    'body': body,
-                    'labels': labels,
-                }
-
-                # Call make_github_request correctly for creating issues
-                response = endpoint.github.make_github_request(
-                    requests.post, url, headers=headers, json=json_data)
-
-                logging.info(
-                    f"Response received for create_github_issue: {response.status_code}")
-            elif method.__name__ == 'add_issue_to_project':
-                # Construct the URL for adding an issue
-                logging.info(f"Adding issue to project")
-                endpoint.github.add_issue_to_project(
-                    github_repo, github_token, title, body)
-
-            # Execute callback if provided
-            if callback:
-                logging.info("Executing callback...")
-                callback(response.json())
-        except Exception as e:
-            logging.error("An error occurred in request_worker:")
-            traceback.print_exc()
-        finally:
-            queue.task_done()
-            if queue.empty():
-                logging.info(
-                    "Queue is empty. Worker is waiting for new requests...")
-                wait_time = 5
-                time.sleep(wait_time)  # Wait for new requests
-                break
