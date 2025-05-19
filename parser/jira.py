@@ -146,6 +146,62 @@ def parse_jira_description(description: list[str]) -> str:
         
     return '\n'.join(result) if result else "No description found"
 
+def adf_table_to_markdown(block) -> str:
+    """
+    Convert a Jira ADF `table` block to GitHub-flavoured Markdown.
+    """
+    def cell_text(cell):
+        out = []
+        for paragraph in cell.get('content', []):
+            if paragraph['type'] == 'paragraph':
+                for item in paragraph.get('content', []):
+                    process_content(item, out)          # ← already exists
+        return ''.join(out).strip()
+
+    rows = [
+        [cell_text(c) for c in row.get('content', [])]
+        for row in block.get('content', [])
+    ]
+    if not rows:
+        return ''
+
+    header, *body = rows
+    md = [
+        '| ' + ' | '.join(header) + ' |',
+        '| ' + ' | '.join(['---'] * len(header)) + ' |',
+    ]
+    md += ['| ' + ' | '.join(r) + ' |' for r in body or [[]]]
+    return '\n'.join(md)
+
+def html_table_to_markdown(table: BeautifulSoup) -> str:
+    """
+    Convert a BeautifulSoup <table> element into a GitHub-flavored markdown table.
+    """
+    rows = []
+    for tr in table.find_all('tr'):
+        cells = tr.find_all(['th', 'td'])
+        rows.append([cell.get_text(strip=True) for cell in cells])
+
+    if not rows:
+        return ''  # empty table
+
+    # Header row and separator
+    header = rows[0]
+    separator = ['---'] * len(header)
+
+    md_lines = []
+    md_lines.append('| ' + ' | '.join(header) + ' |')
+    md_lines.append('| ' + ' | '.join(separator) + ' |')
+
+    # Data rows
+    for row in rows[1:]:
+        # pad short rows if necessary
+        if len(row) < len(header):
+            row += [''] * (len(header) - len(row))
+        md_lines.append('| ' + ' | '.join(row) + ' |')
+
+    return '\n'.join(md_lines)
+
 
 def parse_jira_comments_xml(xml: str) -> pd.DataFrame:
     """
@@ -167,30 +223,52 @@ def parse_jira_comments_xml(xml: str) -> pd.DataFrame:
         soup     = BeautifulSoup(raw_html, "html.parser")
 
         # harvest image src attributes
-        img_srcs = [img["src"] for img in soup.find_all("img", src=True)]
+        img_tags = [
+            img for img in soup.find_all('img', src=True)
+            if '/images/icons/' not in img['src']
+        ]
+        img_srcs = [img['src'] for img in img_tags]
+        img_ids = [re.search(r'/attachment/content/(\d+)', src).group(1)
+                   if re.search(r'/attachment/content/(\d+)', src) else None
+                   for src in img_srcs]
+        img_names = [attachments.get(i, 'NO_FILE_NAME') if i else 'NO_FILE_NAME'
+                     for i in img_ids]
 
-        # for each src, pull the numeric ID out of the URL
-        img_names = []
-        for src in img_srcs:
-            m = re.search(r"/attachment/content/(\d+)", src)
-            if m:
-                img_id = m.group(1)
-                # look up the actual filename, if it exists
-                fname = attachments.get(img_id, "NO_FILE_NAME")
-                img_names.append(fname)
-            else:
-                img_names.append("NO_FILE_NAME")
+        # Extract file links
+        file_links = []
+        file_names = []
+        for a in soup.find_all('a', href=True):
+            m = re.search(r'/attachment/content/(\d+)', a['href'])
+            if m and a.get('data-attachment-type') == 'file':
+                fid = m.group(1)
+                file_links.append(a['href'])
+                file_names.append(
+                    a.get('data-attachment-name') or
+                    attachments.get(fid) or
+                    a.get_text(strip=True)
+                )
+
+        # Combine media
+        media_srcs = img_srcs + file_links
+        media_names = img_names + file_names
+        media_types = ['image'] * len(img_srcs) + ['file'] * len(file_links)
+
+        # Convert HTML tables to markdown
+        tables_md = [html_table_to_markdown(tbl)
+                     for tbl in soup.find_all('table')]
 
         rows.append({
             "comment_id": c.get("id"),
-            "author"    : c.get("author"),
-            "created"   : c.get("created"),
-            "text"      : soup.get_text(" ", strip=True),
-            "img_srcs"  : img_srcs,
-            "img_names" : img_names
+            "author": c.get("author"),
+            "created": c.get("created"),
+            "text": soup.get_text(" ", strip=True),
+            "media_srcs": media_srcs,
+            "media_names": media_names,
+            "media_types": media_types,
+            'tables': tables_md,
         })
             
-    return pd.DataFrame(rows, columns=["comment_id", "author", "created", "text", "img_srcs", "img_names"])
+    return pd.DataFrame(rows, columns=["comment_id", "author", "created", "text", "media_srcs", "media_names", "media_types", "tables"])
 
 def parse_issue_attachments(attachments):
     if not attachments:
@@ -430,7 +508,7 @@ def format_bullet_list(block, output, level=1):
                 format_bullet_list(content_block, output, level + 1)
 
 
-def format_jira_comment(comment: dict, df_media_comments: list[str]):
+def format_jira_comment(comment: dict, media_record: list[str]):
 
     JIRA_BASE_URL = os.getenv('JIRA_BASE_URL')
     
@@ -446,10 +524,10 @@ def format_jira_comment(comment: dict, df_media_comments: list[str]):
         content = []  # Ensure content is defined even if empty
 
     formatted_parts = []
-    media_number = 0
+    idx = 0
 
-    img_names = df_media_comments.img_names # .iloc[media_number,:]
-    img_srcs = df_media_comments.img_srcs
+    # img_names = df_media_comments.img_names # .iloc[media_number,:]
+    # img_srcs = df_media_comments.img_srcs
 
     href = comment.get('author', {}).get('self')
     # Construct the header part with author
@@ -465,18 +543,27 @@ def format_jira_comment(comment: dict, df_media_comments: list[str]):
             formatted_text = ''.join(paragraph_text).strip()
             if formatted_text:
                 formatted_parts.append(formatted_text)
-        elif block['type'] == 'mediaSingle':
+        # IMAGE or FILE → treat them the same: drop a Markdown link right here
+        elif block['type'] in ('mediaSingle', 'mediaInline', 'mediaGroup'):
+            # `mediaGroup` can hold several <media> nodes
+            for _ in range(1 if block['type'] != 'mediaGroup' else len(block.get('content', []))):
+                if idx >= len(media_record['media_srcs']):
+                    break            # safety-net - nothing left to emit
 
-            img_name = img_names[media_number]
-            img_src = img_srcs[media_number]
+                src  = media_record['media_srcs'][idx]
+                name = media_record['media_names'][idx]
 
-            if 'thumbnail' in img_src:
+                # Jira thumbnails → content endpoint
+                if 'thumbnail' in src:
+                    src = src.replace('https://jar-cowi.atlassian.net/', '')
+                    src = src.replace('thumbnail', 'content')
 
-                img_src = img_src.replace('https://jar-cowi.atlassian.net/', '')
-                img_src = img_src.replace('thumbnail', 'content')
+                # Ensure absolute URL
+                if src.startswith('/'):
+                    src = f'{JIRA_BASE_URL}{src}'
 
-            formatted_parts.append(f'[{img_name}]({JIRA_BASE_URL}/{img_src})')
-            media_number += 1
+                formatted_parts.append(f'[{name}]({src})')
+                idx += 1
 
         elif block['type'] == 'blockquote' and 'content' in block:
             # Start blockquote with markdown indicator
@@ -518,6 +605,13 @@ def format_jira_comment(comment: dict, df_media_comments: list[str]):
             format_ordered_list(block, formatted_parts)
         elif block['type'] == 'bulletList' and 'content' in block:
             format_bullet_list(block, formatted_parts)
+        elif block['type'] == 'table':
+            md = adf_table_to_markdown(block)
+            if md:
+                formatted_parts.append(md)
 
+    # for table_md in media_record.get('tables', []):
+    #     formatted_parts.append(table_md)
+    
     # Final formatted output
     return '\n'.join(formatted_parts)
