@@ -110,7 +110,7 @@ def create_github_issue(github_repo, github_token,
             "body": final_description, # truncate to GitHub issue body max length
             "created_at": issue_created,
             "closed": issue_status,
-            # "assignee": issue_owner, #NOTE uncomment for prod
+            "assignee": issue_owner,
             "labels": label_list
         },
         "comments": comments_list, # limit to 100 comments
