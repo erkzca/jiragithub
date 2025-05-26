@@ -205,70 +205,79 @@ def html_table_to_markdown(table: BeautifulSoup) -> str:
 
 def parse_jira_comments_xml(xml: str) -> pd.DataFrame:
     """
-    Parse Jira comments from XML format issue to a comment dataframe.
-    from https://jar-cowi.atlassian.net/si/jira.issueviews:issue-xml/{issue-name}/{issue-name}.xml
+    Parse Jira comments from XML into a DataFrame, extracting text, media/file attachments, and tables.
     """
-    root    = ET.fromstring(xml)
+    root = ET.fromstring(xml)
 
-    # 1) Build the attachments dict
-    attachments = {
-        att.get("id"): att.get("name")
-        for att in root.findall(".//attachments/attachment")
-    }
+    # Build a mapping of attachment ID to filename
+    attachments = {att.get('id'): att.get('name') for att in root.findall('.//attachments/attachment')}
 
-    # 2) Walk comments and resolve image names
     rows = []
-    for c in root.findall(".//comment"):
-        raw_html = html.unescape(c.text or "")
-        soup     = BeautifulSoup(raw_html, "html.parser")
+    for c in root.findall('.//comment'):
+        raw_html = html.unescape(c.text or '')
+        soup = BeautifulSoup(raw_html, 'html.parser')
 
-        # harvest image src attributes
-        img_tags = [
-            img for img in soup.find_all('img', src=True)
-            if '/images/icons/' not in img['src']
-        ]
-        img_srcs = [img['src'] for img in img_tags]
-        img_ids = [re.search(r'/attachment/content/(\d+)', src).group(1)
-                   if re.search(r'/attachment/content/(\d+)', src) else None
-                   for src in img_srcs]
-        img_names = [attachments.get(i, 'NO_FILE_NAME') if i else 'NO_FILE_NAME'
-                     for i in img_ids]
+        # 1) Image attachments: <img src=...> and Jira thumbnail wrappers
+        img_srcs, img_names = [], []
+        # a) standard <img src> tags (skip icon images)
+        for img in soup.find_all('img', src=True):
+            src = img['src']
+            if '/images/icons/' in src:
+                continue
+            img_srcs.append(src)
+            m = re.search(r'/attachment/content/(\d+)', src)
+            img_names.append(attachments.get(m.group(1), 'NO_FILE_NAME') if m else 'NO_FILE_NAME')
+        # b) <a file-preview-type="image"> wrappers
+        for a in soup.find_all('a', attrs={'file-preview-type': 'image'}, href=True):
+            src = a['href']
+            if src in img_srcs:
+                continue
+            img_srcs.append(src)
+            # pick a name from attributes or fallback
+            name = (
+                a.get('file-preview-title')
+                or a.get('data-attachment-name')
+                or a.get('title')
+                or attachments.get(re.search(r'/attachment/content/(\d+)', src).group(1), '')
+            )
+            img_names.append(name or 'NO_FILE_NAME')
 
-        # Extract file links
-        file_links = []
-        file_names = []
+        # 2) File attachments
+        file_links, file_names = [], []
         for a in soup.find_all('a', href=True):
             m = re.search(r'/attachment/content/(\d+)', a['href'])
             if m and a.get('data-attachment-type') == 'file':
                 fid = m.group(1)
                 file_links.append(a['href'])
                 file_names.append(
-                    a.get('data-attachment-name') or
-                    attachments.get(fid) or
-                    a.get_text(strip=True)
+                    a.get('data-attachment-name')
+                    or attachments.get(fid)
+                    or a.get_text(strip=True)
                 )
 
-        # Combine media
+        # Combine media lists
         media_srcs = img_srcs + file_links
         media_names = img_names + file_names
         media_types = ['image'] * len(img_srcs) + ['file'] * len(file_links)
 
-        # Convert HTML tables to markdown
-        tables_md = [html_table_to_markdown(tbl)
-                     for tbl in soup.find_all('table')]
+        # 3) Tables to markdown
+        tables_md = [html_table_to_markdown(tbl) for tbl in soup.find_all('table')]
 
         rows.append({
-            "comment_id": c.get("id"),
-            "author": c.get("author"),
-            "created": c.get("created"),
-            "text": soup.get_text(" ", strip=True),
-            "media_srcs": media_srcs,
-            "media_names": media_names,
-            "media_types": media_types,
+            'comment_id': c.get('id'),
+            'author': c.get('author'),
+            'created': c.get('created'),
+            'text': soup.get_text(' ', strip=True),
+            'media_srcs': media_srcs,
+            'media_names': media_names,
+            'media_types': media_types,
             'tables': tables_md,
         })
-            
-    return pd.DataFrame(rows, columns=["comment_id", "author", "created", "text", "media_srcs", "media_names", "media_types", "tables"])
+
+    return pd.DataFrame(rows, columns=[
+        'comment_id', 'author', 'created', 'text',
+        'media_srcs', 'media_names', 'media_types', 'tables'
+    ])
 
 def parse_issue_attachments(attachments):
     if not attachments:
@@ -609,6 +618,18 @@ def format_jira_comment(comment: dict, media_record: list[str]):
             md = adf_table_to_markdown(block)
             if md:
                 formatted_parts.append(md)
+        elif block['type'] == 'codeBlock':
+            # new handler for code blocks
+            language = block.get('attrs', {}).get('language', '')
+            # join all text nodes in content
+            code_lines = []
+            for item in block.get('content', []):
+                if item.get('type') == 'text':
+                    code_lines.append(item.get('text', ''))
+            code_text = '\n'.join(code_lines)
+            # emit a fenced code block with optional language
+            fence = f"```{language}" if language else "```"
+            formatted_parts.append(f"{fence}\n{code_text}\n```")
 
     # for table_md in media_record.get('tables', []):
     #     formatted_parts.append(table_md)
