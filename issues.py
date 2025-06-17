@@ -89,7 +89,9 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
     # Step 4: Iterate through each issue and create GitHub issues
     total_issues = len(jira_issues)
     logging.info(f"Starting migration of {total_issues} Jira issues to GitHub")
-    for idx, issue in enumerate(jira_issues, start=1):
+    for idx, issue in enumerate(jira_issues, start=1): 
+        # if issue["key"] not in ("JAR-1375"):
+        #     continue
         logging.info(
             f"Processing Jira issue {idx}/{total_issues}: {issue.get('key', '')}")
         description = []
@@ -221,7 +223,7 @@ def migrate_jira_to_github(jira_base_url, jira_user, jira_api_token, github_repo
 
 def get_project_id(projects: list[dict], project_name: str) -> str:
     for project in projects:
-        if project['title'] == "JAR":
+        if project['title'] == project_name:
             return project['id']
         else:
             raise ValueError(
@@ -245,7 +247,6 @@ if __name__ == "__main__":
 
     # Jar github projects to migrate to (The ones that exist in JAR Github repository)
     # ['TEST - Lokal RSjælland', 'TEST - Lokal RSyd', 'TEST - JAR-MASTER']
-    projects_to = [PROJECT_KEY]
 
     # Function tp start the migration process
     github_issue_numbers = migrate_jira_to_github(
