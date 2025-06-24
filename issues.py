@@ -225,8 +225,9 @@ def get_project_id(projects: list[dict], project_name: str) -> str:
     for project in projects:
         if project['title'] == project_name:
             return project['id']
-        else:
-            raise ValueError(
+        
+    # If the project is not found, raise an error
+    raise ValueError(
                 f"Project '{project_name}' not found in the list of projects.")
 
 
