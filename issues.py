@@ -241,20 +241,18 @@ if __name__ == "__main__":
     PROJECT_KEY = os.getenv('PROJECT_KEY')
     JQL = os.getenv('JQL')
 
+    if PROJECT_KEY is None:
+        raise ValueError("PROJECT_KEY environment variable is not set.")
+
     logger = setup_logging()
 
     # Fetch Github projects that exist in working repo (Working on your own repo you can comment this out)
     projects = endpoint.github.list_projects(GH_REPO, GH_TOKEN)
-
-    # Jar github projects to migrate to (The ones that exist in JAR Github repository)
-    # ['TEST - Lokal RSjælland', 'TEST - Lokal RSyd', 'TEST - JAR-MASTER']
+    project_id = get_project_id(projects, project_name=PROJECT_KEY)
 
     # Function tp start the migration process
     github_issue_numbers = migrate_jira_to_github(
         JIRA_BASE_URL, JIRA_USER, JIRA_API_TOKEN, GH_REPO, GH_TOKEN, JQL, config.assignees.ASSIGNEES)
-
-    # Add issue to project (TEST - JAR-MASTER) in GitHub
-    project_id = get_project_id(projects, project_name=PROJECT_KEY)
 
     # Add the issues to the GitHub project
     for issue_number in github_issue_numbers:
@@ -262,4 +260,3 @@ if __name__ == "__main__":
             
             endpoint.github.add_issue_to_project(
                 GH_REPO, GH_TOKEN, project_id, issue_number)
-
