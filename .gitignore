@@ -1,0 +1,6 @@
+# file types
+*.log
+*.pyc
+
+#files
+.env

@@ -1,0 +1,17 @@
+ASSIGNEES = {
+    'Emil Sahin': 'emsi-cowi',
+    'Filip Bruman': 'COWI-FIBR',
+    'Hans Christian Ries': 'regional-admin-bruger',
+    'Jan Sjørup Nielsen': 'jasjni',
+    'John Ryan Pedersen': 'JohnRyanPedersen',
+    'Kim Jacobsen': 'Kimjac58',
+    'Lars Christensen': 'LarsTOAO',
+    'Line Boel': 'lineboel',
+    'Lone Oster': 'LoRsj',
+    'Magnus-Matias Isbrand Høirup': 'COWI-MI',
+    'Marianna Engberg Pedersen': 'maenpe',
+    'Peter Riis': 'prhan',
+    'Poul Haugaard': 'PoulHaugaard',
+    'Tina Rebsdorf Simonsen': 'tinarebsdorf',
+    'Tom Birch Hansen': 'TomBirchHansen',
+}
